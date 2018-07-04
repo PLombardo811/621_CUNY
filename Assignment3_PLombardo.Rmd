@@ -1,0 +1,121 @@
+---
+title: "Week3_621"
+author: "Peter Lombardo"
+date: "July 1, 2018"
+output: html_document
+---
+```{r}
+library(bestglm)
+library(knitr)
+library(dplyr)
+library(faraway)
+library(ggplot2)
+library(ggthemes)
+library(gridExtra)
+library(reshape2)
+library(leaps)
+library(caret)
+library(pROC)
+library(grid)
+library(MASS)
+```
+```{r}
+#import CSV from git
+crime_e <- read.csv("https://raw.githubusercontent.com/PLombardo811/621_CUNY/Week-3/crime-evaluation-data.csv", header = T)
+crime_t <- read.csv("https://raw.githubusercontent.com/PLombardo811/621_CUNY/Week-3/crime-training-data.csv", header = T)
+crime_t = as.data.frame(crime_t)
+X <- crime_t[ , -14]
+Y <- crime_t[ , 14]
+Z <- crime_e[ , -14]
+nonbinary <- c(1:2, 4:13)
+```
+```{r}
+summary(crime_t)
+```
+#Data Prep
+```{r}
+cor_crime_t <- ifelse((cor(crime_t)>0.5 | cor(crime_t)< -0.5),1,0)
+
+kable(cor_crime_t)
+```
+```{r}
+ggplot(crime_t, aes(x=zn)) + geom_histogram(bins=100) + theme_tufte()
+```
+```{r}
+crime_t$zn01 <- ifelse(crime_t$zn==0,0,1)
+
+crime_t <- cbind(dplyr::select(crime_t, -target), dplyr::select(crime_t, target))
+```
+#Build Models
+```{r}
+sub_crime_t <- bestglm(crime_t, IC= "BIC", family = binomial)
+
+summary(sub_crime_t$BestModel)
+
+par(mfrow=c(2,2))
+
+plot(sub_crime_t$BestModel)
+
+par(mfrow=c(1,1))
+
+```
+```{r}
+ggplot(crime_t, aes(x=rad)) + geom_histogram(bins=100) + theme_tufte() + 
+  ggtitle("Index of Accessibility to Radial Highways")
+
+ggplot(crime_t, aes(x=tax)) + geom_histogram(bins=100) + theme_tufte() + 
+  ggtitle("Full-value Property-tax Rate per $10,000")
+```
+```{r}
+kable(cor(dplyr::select(crime_t, nox, tax, rad)))
+```
+```{r}
+model1 <- glm(target ~ nox + rad + tax, family=binomial, data = crime_t)
+model2 <- glm(target ~ nox + age + dis + black + medv + zn01, family=binomial,
+              data=crime_t)
+model3 <- glm(target ~ nox + ptratio + black + medv, family=binomial, data = crime_t)
+
+crime_t$model1p <- predict(model1,crime_t,type='response')
+crime_t$model2p <- predict(model2,crime_t,type='response')
+crime_t$model3p <- predict(model3,crime_t,type='response')
+```
+#Select Models
+```{r}
+roc.results1 <- roc(factor(target) ~ model1p, data=crime_t)
+roc.results2 <- roc(factor(target) ~ model2p, data=crime_t)
+roc.results3 <- roc(factor(target) ~ model3p, data=crime_t)
+
+par(mfrow=c(2,2))
+
+plot(roc.results1)
+plot(roc.results2)
+plot(roc.results3)
+
+par(mfrow=c(1,1))
+
+paste("Model 1 Area under the curve:",auc(roc.results1),sep=" ")
+paste("Model 2 Area under the curve:",auc(roc.results2),sep=" ")
+paste("Model 3 Area under the curve:",auc(roc.results3),sep=" ")
+```
+
+# calculate probabilities for the  dataset
+```{r}
+crime_t$zn01 <- ifelse(crime_t$zn==0,0,1)
+crime_t$model1p <- predict(model1, crime_t, type='response')
+crime_t$model2p <- predict(model2, crime_t, type='response')
+crime_t$model3p <- predict(model3, crime_t, type='response')
+
+crime_t$row.num <- 1:dim(crime_t)[1]
+
+graphcrim <- dplyr::select(crime_t, model1p, model2p, model3p) %>%
+  arrange(model2p)
+
+graphcrim$row.num <- 1:dim(graphcrim)[1]
+
+graphcrim <- melt(graphcrim, id.vars='row.num', variable.name = 'Model', 
+                  value.name = 'Prediction')
+
+ggplot(graphcrim, aes(x=row.num, y=Prediction, color=Model)) + geom_line() + 
+  theme_tufte()
+
+```
