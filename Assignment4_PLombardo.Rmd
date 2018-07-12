@@ -1,0 +1,223 @@
+---
+title: "Assignment_4"
+author: "Peter Lombardo"
+date: "July 9, 2018"
+output: html_document
+---
+```{r}
+library(MuMIn)
+library(PerformanceAnalytics)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(lattice)
+library(tidyr)
+library(dplyr)
+library(pROC)
+library(stringr)
+library(aod)
+library(Rcpp)
+library(Amelia)
+library(corrplot)
+library(gam)
+library(pscl)
+library(ROCR)
+library(gmodels)
+library(rpart)
+library(Metrics)
+```
+```{r}
+ins_t <- read.csv('https://raw.githubusercontent.com/PLombardo811/621_CUNY/Week-4/insurance_training_data.csv', na.string = c("", "NA"), stringsAsFactors = FALSE)
+```
+#ins_t Exploration
+```{r}
+summary(ins_t)
+```
+```{r}
+summary(ins_t$TARGET_FLAG)
+hist(ins_t$TARGET_FLAG)
+```
+```{r}
+summary(ins_t$TARGET_AMT)
+hist(ins_t$TARGET_AMT)
+```
+```{r}
+blue_book <- unname(sapply(ins_t$BLUEBOOK, str_replace_all, '[,$]', ''))
+blue_book <- as.numeric(blue_book)
+
+income <- unname(sapply(ins_t$INCOME, str_replace_all, '[,$]', ''))
+income <- as.numeric(income)
+
+home_val <- unname(sapply(ins_t$HOME_VAL, str_replace_all, '[,$]', ''))
+home_val <- as.numeric(home_val)
+
+old_claim <- unname(sapply(ins_t$OLDCLAIM, str_replace_all, '[,$]', ''))
+old_claim <- as.numeric(old_claim)
+
+ins_t$BLUEBOOK <- blue_book
+ins_t$INCOME <- income
+ins_t$HOME_VAL <- home_val
+ins_t$OLDCLAIM <- old_claim
+
+ins_t2 <- ins_t[,-c(1,2,3,9,11,12,13,14,16,19,20,23,26)]
+chart.Correlation(ins_t2)
+```
+
+```{r}
+the_cor <- cor(ins_t[sapply(ins_t, is.numeric)])
+
+corrplot(the_cor, method = "circle")
+```
+```{r}
+ins_t$PARENT1 <- ifelse(ins_t$PARENT1 == "No", 1, 0)
+ins_t$SEX <- ifelse(ins_t$SEX == 'M', 0, 1)
+ins_t$CAR_USE <- ifelse(ins_t$CAR_USE == 'Commercial', 0, 1)
+ins_t$MSTATUS <- ifelse(ins_t$MSTATUS == 'Yes', 0, 1)
+ins_t$RED_CAR <- ifelse(ins_t$RED_CAR == "no", 0, 1)
+ins_t$EDUCATION <- ifelse(ins_t$EDUCATION %in% c('PhD', "Masters"),0, 1)
+ins_t$REVOKED <- ifelse(ins_t$REVOKED == "No", 0, 1)
+ins_t$URBANICITY <- ifelse(ins_t$URBANICITY == "Highly Urban/ Urban", 1, 0)
+ins_t$JOB <- ifelse(ins_t$JOB %in% c('Professional', 'Manager', 'Student', 'Lawyer'), 1, 0)
+ins_t$CAR_TYPE <- ifelse(ins_t$CAR_TYPE %in% c('Panel Truck', "Pickup", "Sports Car"), 1, 0)
+```
+#Build Models
+```{r}
+ins_t <- ins_t[,-1]
+ins_t <- ins_t[sample(nrow(ins_t)),]
+top <- round(.70 * NROW(ins_t))
+
+train1 <- ins_t[1:top,]
+test1 <- ins_t[(top + 1):NROW(ins_t),]
+```
+```{r}
+#Model 1
+training_2a <- dplyr::select(train1, -c(KIDSDRIV,HOMEKIDS,EDUCATION,JOB,TIF,
+                                     CAR_TYPE,OLDCLAIM,CLM_FREQ,MVR_PTS))
+M11 <- lm( TARGET_FLAG~ .-TARGET_FLAG, data =training_2a)
+
+M12 <- update(M11,.~.-AGE-HOMEKIDS-YOJ-INCOME-SEX-EDUCATION-BLUEBOOK-RED_CAR-OLDCLAIM-CLM_FREQ)
+
+TARGET_FLAG_m1 <- M12
+summary(TARGET_FLAG_m1)
+
+answer1a <- predict(TARGET_FLAG_m1, type = "response")
+answer1a <- ifelse(answer1a <.5, 0, 1)
+```
+```{r}
+#Model 2
+train1_clean <- na.omit(train1)
+fullmod <- glm(TARGET_FLAG ~ KIDSDRIV + AGE + HOMEKIDS + YOJ + INCOME + PARENT1 + HOME_VAL + MSTATUS + SEX + EDUCATION + JOB + TRAVTIME + CAR_USE + BLUEBOOK + TIF + CAR_TYPE + RED_CAR + OLDCLAIM + CLM_FREQ + REVOKED + MVR_PTS + CAR_AGE + URBANICITY, data = train1_clean, family=binomial(link ='probit'))
+
+backwards <- step(fullmod, trace = 0)
+prediction <- round(predict(backwards, type = 'response'), 4)
+
+answer <- ifelse(prediction < .5, 0 ,1)
+```
+```{r}
+#Model 3
+
+nothing <- glm(TARGET_FLAG ~ 1, data = train1_clean, family = binomial(link = 'probit'))
+forwards <- step(nothing, scope = list(lower=formula(nothing), upper=formula(fullmod)), direction = "forward", trace = 0)
+
+pred <- round(predict(forwards, type = 'response'), 4)
+
+answer2 <- ifelse(pred < .5, 0 ,1)
+```
+```{r}
+#Model 4
+cutoff <- nrow(ins_t)*.70
+ins.train <- ins_t[1:cutoff,]
+ins.test <- ins_t[(cutoff+1):nrow(ins_t),]
+
+calculate_accuracy <- function(frmla){
+  fit <- glm(frmla, data=ins.train, family=binomial(link='logit'))
+  # http://www.r-bloggers.com/how-to-perform-a-logistic-regression-in-r/
+  fitted.results <- predict(fit, newdata=ins.test, type='response', na.action = na.pass)
+  fitted.results <- ifelse(fitted.results > 0.5, 1, 0)
+  misClasificError <- mean(fitted.results != ins.train$TARGET_FLAG, na.rm=TRUE)
+  return (1-misClasificError)  
+}
+
+col_names <- c("CAR_TYPE","CAR_USE","EDUCATION","JOB","MSTATUS","PARENT1","RED_CAR","REVOKED","SEX","URBANICITY")
+
+a1 <- calculate_accuracy(TARGET_FLAG ~ CAR_TYPE)
+a2 <- calculate_accuracy(TARGET_FLAG ~ CAR_USE)
+a3 <- calculate_accuracy(TARGET_FLAG ~ EDUCATION)
+a4 <- calculate_accuracy(TARGET_FLAG ~ JOB)
+a5 <- calculate_accuracy(TARGET_FLAG ~ MSTATUS)
+a6 <- calculate_accuracy(TARGET_FLAG ~ PARENT1)
+a7 <- calculate_accuracy(TARGET_FLAG ~ RED_CAR)
+a8 <- calculate_accuracy(TARGET_FLAG ~ REVOKED)
+a9 <- calculate_accuracy(TARGET_FLAG ~ SEX)
+a10 <- calculate_accuracy(TARGET_FLAG ~ URBANICITY)
+
+accuracy <- c(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10)
+
+kable(data.frame(col_names, accuracy))
+
+```
+```{r}
+car_type_to_car_use <- chisq.test(table(ins.train$CAR_TYPE, ins.train$CAR_USE))
+car_type_to_education <- chisq.test(table(ins.train$CAR_TYPE, ins.train$EDUCATION))
+car_type_to_job <- chisq.test(table(ins.train$CAR_TYPE, ins.train$JOB))
+car_type_to_mstatus <- chisq.test(table(ins.train$CAR_TYPE, ins.train$MSTATUS))
+car_type_to_parent1 <- chisq.test(table(ins.train$CAR_TYPE, ins.train$PARENT1))
+car_type_to_red_car <- chisq.test(table(ins.train$CAR_TYPE, ins.train$RED_CAR))
+car_type_to_revoked <- chisq.test(table(ins.train$CAR_TYPE, ins.train$REVOKED))
+car_type_to_sex <- chisq.test(table(ins.train$CAR_TYPE, ins.train$SEX))
+car_type_to_urbancity <- chisq.test(table(ins.train$CAR_TYPE, ins.train$URBANICITY))
+
+p.car_type_to_car_use <- round(car_type_to_car_use$p.value, digits = 3)
+p.car_type_to_education <- round(car_type_to_education$p.value, digits = 3)
+p.car_type_to_job <- round(car_type_to_job$p.value, digits = 3)
+p.car_type_to_mstatus <- round(car_type_to_mstatus$p.value, digits = 3)
+p.car_type_to_parent1 <- round(car_type_to_parent1$p.value, digits = 3)
+p.car_type_to_red_car <- round(car_type_to_red_car$p.value, digits = 3)
+p.car_type_to_revoked <- round(car_type_to_revoked$p.value, digits = 3)
+p.car_type_to_sex <- round(car_type_to_sex$p.value, digits = 3)
+p.car_type_to_urbancity <- round(car_type_to_urbancity$p.value, digits = 3)
+
+all_chi_sq_labels <- c("car_type_to_car_use","car_type_to_education","car_type_to_job","car_type_to_mstatus","car_type_to_parent1","car_type_to_red_car","car_type_to_revoked","car_type_to_sex","car_type_to_urbancity")
+
+all_chi_sq_results <- c(p.car_type_to_car_use,p.car_type_to_education,p.car_type_to_job,p.car_type_to_mstatus,p.car_type_to_parent1,p.car_type_to_red_car,p.car_type_to_revoked,p.car_type_to_sex,p.car_type_to_urbancity)
+
+kable(data.frame(all_chi_sq_labels, all_chi_sq_results))
+```
+```{r}
+drops <- c("CAR_USE","EDUCATION","JOB","PARENT1","RED_CAR","SEX","URBANICITY")
+ins.train <- ins.train[ , !(names(ins.train) %in% drops)]
+ins.test <- ins.test[ , !(names(ins.test) %in% drops)]
+mstatus_to_revoked <- chisq.test(table(ins.train$MSTATUS, ins.train$REVOKED))
+round(mstatus_to_revoked$p.value, digits = 3)
+drops <- c("REVOKED")
+ins.train <- ins.train[ , !(names(ins.train) %in% drops)]
+ins.test <- ins.test[ , !(names(ins.test) %in% drops)]
+```
+```{r}
+#Return Models
+do_auc <- function(model, the_data){
+  p <- predict(model, newdata=the_data, type="response")
+  pr <- prediction(p, the_data$TARGET_FLAG)
+  prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+  print(plot(prf))
+  auc <- performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return (auc)
+}
+
+
+core.glm <- glm(TARGET_FLAG ~  . -TARGET_AMT, data = ins.train)
+options(na.action = "na.fail")
+dredge.result <- dredge(core.glm, rank="AIC", extra=c("R^2", "adjR^2"))
+kable(head(dredge.result, n=4))
+
+dredge.mdl.1 <- get.models(dredge.result, 1)[[1]]
+dredge.mdl.2 <- get.models(dredge.result, 2)[[1]]
+dredge.mdl.3 <- get.models(dredge.result, 3)[[1]]
+dredge.mdl.4 <- get.models(dredge.result, 4)[[1]]
+
+do_auc(dredge.mdl.1, ins.train)
+do_auc(dredge.mdl.2, ins.train)
+do_auc(dredge.mdl.3, ins.train)
+do_auc(dredge.mdl.4, ins.train)
+```
