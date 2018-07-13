@@ -93,7 +93,8 @@ test1 <- ins_t[(top + 1):NROW(ins_t),]
 #Model 1
 training_2a <- dplyr::select(train1, -c(KIDSDRIV,HOMEKIDS,EDUCATION,JOB,TIF,
                                      CAR_TYPE,OLDCLAIM,CLM_FREQ,MVR_PTS))
-M11 <- lm( TARGET_FLAG~ .-TARGET_FLAG, data =training_2a)
+training_2a_clean <- na.omit(training_2a)
+M11 <- lm( TARGET_FLAG~ .-TARGET_FLAG, data = training_2a_clean)
 
 M12 <- update(M11,.~.-AGE-HOMEKIDS-YOJ-INCOME-SEX-EDUCATION-BLUEBOOK-RED_CAR-OLDCLAIM-CLM_FREQ)
 
@@ -205,8 +206,8 @@ do_auc <- function(model, the_data){
   return (auc)
 }
 
-
-core.glm <- glm(TARGET_FLAG ~  . -TARGET_AMT, data = ins.train)
+ins.train_clean <- na.omit(ins.train)
+core.glm <- glm(TARGET_FLAG ~  . -TARGET_AMT, data = ins.train_clean)
 options(na.action = "na.fail")
 dredge.result <- dredge(core.glm, rank="AIC", extra=c("R^2", "adjR^2"))
 kable(head(dredge.result, n=4))
